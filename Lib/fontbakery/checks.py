@@ -3592,7 +3592,7 @@ def check_with_pyfontaine(fb, font_file, glyphset):
       fb.ok("pyfontaine passed this file")
   except subprocess.CalledProcessError, e:
     fb.error(("pyfontaine returned an error code. Output follows :"
-              "\n\n{}\n").format(e.output))
+              "\n\n{}...\n").format(e.output.split('\n',1)[0]))
   except OSError:
     # This is made very prominent with additional line breaks
     fb.warning("\n\n\npyfontaine is not available!"
