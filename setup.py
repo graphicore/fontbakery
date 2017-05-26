@@ -140,7 +140,16 @@ setup(
         'pyasn1',
         'protobuf',
         'flake8',
-        'coveralls'
+        'coveralls',
+        'beautifulsoup4==4.5.1',
+        'bs4==0.0.1',
+        'fonttools',
+        'six==1.10.0',
+        'wheel',
+        'python-dateutil',
+        'pyicu'
+
+
     ]
 )
 
