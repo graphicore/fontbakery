@@ -575,6 +575,51 @@ class CheckRunner:
             status = (ERROR, FailedDependenciesError(check, error))
             return (status, None)
 
+    def _check_has_overries(check):
+        return False
+
+    def _check_get_overries(check):
+      return {}
+
+    def _exec_check_with_overrides(check, args):
+      # FIXME:
+      #    There needs to be a way to define a SKIP, either based on check
+      #    arguments, or maybe even on other values of font-bakery
+      #    conditions (this would be not entirely trivial, e.g. a check
+      #    without iterargs can't use a condition that uses iterargs.)
+      #    This needs more ways than profile.check_log_override because
+      #    if a check does not apply for a font of the family or for the
+      #    whole family, we can't change it in the profile, e.g. by not
+      #    including the check or by check-conditions.
+      #
+      #    Thinking about this, check-conditions should not use any iterags
+      #    which are not also used by check itself, because it will make
+      #    the check executed (or skipped) more often and unrelated to the
+      #    check results. We should have a self-check that prevents this
+      #    from happening. somewhere around _get_aggregate_args
+
+      {
+        checkid:
+            conditions_message
+            conditions:
+              - not conditon
+              - condition
+              - font = My-Font-Regular.ttf # skip by specific
+            overrides:
+              message_code: new_status, new_message
+      }
+
+      skipped = None
+      if skipped:
+        yield DEBUG, 'skipped by fontbakery.yaml'
+        yield skipped
+        return
+
+      # This is just one way of overrides: per check result message.code
+      overrides_dict = self._check_get_overries(check)
+      for status, message in self._exec_check(check, args)
+          yield from _check_log_override_gen(overrides_dict, status, message)
+
     def _run_check(self, check, iterargs):
         summary_status = None
         # A check is more than just a function, it carries
@@ -609,7 +654,11 @@ class CheckRunner:
             # correctly.
             yield skipped
         else:
-            for sub_result in self._exec_check(check, args):
+            if not self._check_has_overries(check)
+                results_gen = self._exec_check(check, args)
+            else
+                results_gen = self._exec_check_with_overrides(check, args)
+            for sub_result in results_gen:
                 status, _ = sub_result
                 if summary_status is None or status >= summary_status:
                     summary_status = status
@@ -867,16 +916,16 @@ class Section:
         return func
 
 
-def _check_log_override(overrides, status, message):
+def _check_log_override(overrides_dict, status, message):
     result_status = status
     result_message = message
     override = False
-    for override_target, new_status, new_message_string in overrides:
-        # Override is only possible by matching message.code
-        if (not hasattr(result_message, 'code') or
-            result_message.code != override_target):
-            continue
+
+    # Override is only possible by matching message.code
+    if hasattr(result_message, 'code') \
+                              and result_message.code in overrides_dict:
         override = True
+        new_status, new_message_string = overrides_dict[result_message.code]
         if new_status is not None:
             result_status = new_status
         if new_message_string  is not None:
@@ -884,8 +933,28 @@ def _check_log_override(overrides, status, message):
             # as it is the same condition this makes totally sense.
             result_message = Message(result_message.code, new_message_string)
         # Break the for loop, we had a successful override.
-        break
+
     return override, result_status, result_message
+
+def _check_log_override_gen(overrides_dict, status, message):
+    overriden, result_status, result_message = \
+        _check_log_override(overrides_dict, status, message)
+    if overriden:
+        # Both changed
+        if result_status != status and result_message != message:
+            yield DEBUG, (f'Overridden check status and message,'
+                          f' original: {status} {message}')
+        # Only status changed
+        elif result_status != status and result_message == message:
+            yield DEBUG, f'Overridden check status, original: {status}'
+        # Only message changed
+        elif result_status == status and result_message != message:
+            yield DEBUG, f'Overridden check message, original: {message}'
+        # nothing changed (despite of a match in override rules)
+        else
+            yield DEBUG, ('A check status override rule matched but'
+                          ' did not change the resulting status.')
+    yield result_status, result_message
 
 def check_log_override(check, new_id, overrides, reason=None):
     """ Returns a new FontBakeryCheck that is decorating (wrapping) check,
@@ -907,6 +976,12 @@ def check_log_override(check, new_id, overrides, reason=None):
                  new_status: Status or None, keep old status
                  new_message_string: string or None, keep old message
     """
+    # Lookup in a dict should be quicker than linearly searching a list.
+    overrides_dict = dict()
+    for override_target, new_status, new_message_string in overrides:
+      if override_target in override_dict: continue
+      overrides_dict[override_target] = (new_status, new_message_string)
+
     @wraps(check) # defines __wrapped__
     def override_wrapper(*args, **kwds):
         # A check can be either a normal function that returns one Status or a
@@ -921,26 +996,7 @@ def check_log_override(check, new_id, overrides, reason=None):
         # Iterate over sub-results one-by-one, list(result) would abort on
         # encountering the first exception.
         for (status, message) in result:  # Might raise.
-            overriden, result_status, result_message = \
-                _check_log_override(overrides, status, message)
-            if overriden:
-                # nothing changed (despite of a match in override rules)
-                if result_status == status and result_message == message:
-                    yield DEBUG, ('A check status override rule matched but'
-                                  ' did not change the resulting status.')
-                # Both changed
-                elif result_status != status and result_message != message:
-                    yield DEBUG, (f'Overridden check status and message,'
-                                  f' original: {status} {message}')
-                # Only status changed
-                elif result_status != status and result_message == message:
-                    yield DEBUG, f'Overridden check status, original: {status}'
-                # Only message changed
-                elif result_status == status and result_message != message:
-                    yield DEBUG, f'Overridden check message, original: {message}'
-
-            yield result_status, result_message
-
+            yield from _check_log_override_gen(overrides_dict, status, message)
     # Make the callable here and return that.
     new_check = FontBakeryCheck(
         override_wrapper
